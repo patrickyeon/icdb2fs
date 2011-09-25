@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -5,8 +6,9 @@
 #include <unistd.h>
 
 #define HEADER_SKIP_BYTES 0x50
-#define LISTING_SKIP_BYTES 24
-#define LISTING_TRAILING_BYTES 256 - LISTING_SKIP_BYTES - 5
+#define LISTING_SKIP_BYTES 16
+#define LISTING_LEN 256
+#define LISTING_NAME_LEN 192
 
 #pragma pack(1) // just going to hope this is doing what I think.
 struct dbhead
@@ -19,16 +21,21 @@ struct dbhead
 
 struct listing
 {
-    // TODO update LISTING_TRAILING_BYTES whenever this struct changes
     uint8_t unhandled[LISTING_SKIP_BYTES];
+    uint32_t self_ref; // seems to be an offset that points back to here
+    uint32_t gap;
     uint32_t char_count;
-    char filename; // don't know a max size, but it's NULL-padded...
-    uint8_t trailer[LISTING_TRAILING_BYTES];
+    char filename[LISTING_NAME_LEN]; // NULL-padded, guessing at max size
+    uint32_t foo[6]; // Don't know what's in here yet
+    uint32_t data_size; // just a guess right now
+    uint32_t data_offset; // offset into icdb.dat this file starts at
+    uint32_t last_flag; // looks like it's always 1?
 };
 #pragma pack()
 
 int main(int argc, char **argv)
 {
+    assert(sizeof(struct listing) == LISTING_LEN);
     if(argc < 1)
     {
         fprintf(stderr, "\nUsage: %s <db file>\n -- Nothing fancy yet\n\n",
@@ -65,16 +72,24 @@ int main(int argc, char **argv)
         fprintf(stderr, "Memory error\n\n");
         return(-1);
     }
-    int i;
-    for(i = 0; i < header->num_listings; i++)
+    int i, offset;
+    for(i = 0, offset = header->offset_listings; i < header->num_listings;
+        i++, offset += sizeof(struct listing))
     {
-        if(pread(fd, templist, sizeof(struct listing),
-                 header->offset_listings + (i * sizeof(struct listing))) !=
-                 sizeof(struct listing))
+        if(pread(fd, templist, sizeof(struct listing), offset) !=
+           sizeof(struct listing))
         {
             fprintf(stderr, "Ran out of file before finishing listings\n\n");
             return(-1);
         }
+        int warn = ' ';
+        if(templist->self_ref != offset + (void *)(&(templist->self_ref)) - 
+                (void *)templist)
+        {
+            warn = '!';
+        }
+        printf("%c %5x %5x [%5x]", warn, templist->data_offset,
+               templist->data_offset + templist->data_size, templist->data_size);
         fwrite(&(templist->filename), templist->char_count, 1, stdout);
         printf("\n");
         //FIXME not error-checking there
