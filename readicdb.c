@@ -25,12 +25,15 @@ struct listing
                        // entries in this section if it's the first listing, 
                        // 0x01 otherwise?
     uint32_t head_only[2]; // unknown, but 0x0 when not the head?
-    uint32_t not_head; // unknown, 0x0 when head?
+    uint32_t back_step; // backwards offset to start of prev. listing, from 
+                        // start of this listing. Includes the NULL-padding, is
+                        // 0x00 for the first listing
     uint32_t self_ref; // seems to be an offset that points back to here
     uint32_t gap; // maybe always zero?
     uint32_t char_count;
     char filename[LISTING_NAME_LEN]; // NULL-padded, guessing at max size
-    uint32_t foo[6]; // Don't know what's in here yet
+    uint8_t guid[24]; // see unscramble_guid to see how it's made to match the
+                      // GUID form that I found in \sids.
     uint32_t data_size; // just a guess right now
     uint32_t data_offset; // offset into icdb.dat this file starts at
     uint32_t last_flag; // looks like it's always 1?
@@ -39,6 +42,7 @@ struct listing
 
 uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
                        int index);
+void unscramble_guid(uint8_t *guid);
 
 int main(int argc, char **argv)
 {
@@ -92,13 +96,22 @@ int main(int argc, char **argv)
             return(-1);
         }
 
-        printf("%d %5x %5x [%5x]", check_listing(templist, header, i),
-               templist->data_offset,
+        // deal with the guid
+        unscramble_guid(templist->guid);
+        int j;
+        for(j = 0; j < 11; j++)
+        {
+            printf("%02x", templist->guid[2 * j]);
+            printf("%02x-", templist->guid[2 * j + 1]);
+        }
+        // last word for the guid (no trailing -)
+        printf("%02x%02x", templist->guid[22], templist->guid[23]);
+
+        printf(" | %5x %5x [%5x] ", templist->data_offset,
                templist->data_offset + templist->data_size + 15, // 15=header-1
                templist->data_size);
         fwrite(&(templist->filename), templist->char_count, 1, stdout);
         printf("\n");
-        //FIXME not error-checking there
     }
 
     return(0);
@@ -120,7 +133,7 @@ uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
         warn |= (1 << 1);
     }
     // what about the non-head entry?
-    if(index == 0 && listing->not_head)
+    if(index == 0 && listing->back_step)
     {
         warn |= (1 << 3);
     }
@@ -142,4 +155,29 @@ uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
         warn |= (1 << 6);
     }
     return(warn);
+}
+
+void unscramble_guid(uint8_t *guid)
+{
+    // I feel like I'm missing something obvious re: byte-ordering here, but 
+    // I've not been able to figure out what, so brute-force!
+    uint8_t scratch[24];
+    int i;
+    for(i = 0; i < 8; i++)
+    {
+        scratch[i] = guid[i];
+    }
+    for(i = 8; i < 16; i++)
+    {
+        scratch[i] = guid[i + 8];
+    }
+    for(i = 16; i < 24; i++)
+    {
+        scratch[i] = guid[i - 8];
+    }
+    for(i = 0; i < 24; i++)
+    {
+        guid[i] = (uint8_t)(scratch[i] << 4) | (scratch[i] >> 4);
+    }
+    return;
 }
