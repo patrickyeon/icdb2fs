@@ -98,16 +98,8 @@ int main(int argc, char **argv)
 
         // deal with the guid
         unscramble_guid(templist->guid);
-        int j;
-        for(j = 0; j < 11; j++)
-        {
-            printf("%02x", templist->guid[2 * j]);
-            printf("%02x-", templist->guid[2 * j + 1]);
-        }
-        // last word for the guid (no trailing -)
-        printf("%02x%02x", templist->guid[22], templist->guid[23]);
 
-        printf(" | %5x %5x [%5x] ", templist->data_offset,
+        printf("%5x %5x [%5x] ", templist->data_offset,
                templist->data_offset + templist->data_size + 15, // 15=header-1
                templist->data_size);
         fwrite(&(templist->filename), templist->char_count, 1, stdout);
@@ -161,6 +153,7 @@ void unscramble_guid(uint8_t *guid)
 {
     // I feel like I'm missing something obvious re: byte-ordering here, but 
     // I've not been able to figure out what, so brute-force!
+    // This is also likely better re-done as a pure function.
     uint8_t scratch[24];
     int i;
     for(i = 0; i < 8; i++)
