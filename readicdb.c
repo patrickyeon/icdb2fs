@@ -111,7 +111,6 @@ int open_icdb(char *filename, struct dbhead *header)
     if(read(fd, header, sizeof(struct dbhead)) != sizeof(struct dbhead))
     {
         fprintf(stderr, "\nFile too small to get a whole header\n\n");
-        free(header);
         close(fd);
         return(-1);
     }
