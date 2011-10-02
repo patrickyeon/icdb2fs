@@ -43,6 +43,7 @@ struct listing
 uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
                        int index);
 void unscramble_guid(uint8_t *guid);
+int open_icdb(char *filename, struct dbhead *header);
 
 int main(int argc, char **argv)
 {
@@ -54,29 +55,16 @@ int main(int argc, char **argv)
         return(-1);
     }
 
-    // All the fun that goes along with opening files, malloc'ing memory
-    char *dbfile = argv[1];
-    int fd = open(dbfile, O_RDONLY);
-    if(fd == -1)
+    int fd;
+    struct dbhead header;
+
+    if((fd = open_icdb(argv[1], &header)) < 0)
     {
-        fprintf(stderr, "\nError trying to open file\n\n");
         return(-1);
     }
-    struct dbhead *header = malloc(sizeof(struct dbhead));
-    if(header == NULL)
-    {
-        fprintf(stderr, "\nMemory error\n\n");
-        return(-1);
-    }
-    if(read(fd, header, sizeof(struct dbhead)) != sizeof(struct dbhead))
-    {
-        fprintf(stderr, "\nFile too small to get a whole header\n\n");
-        return(-1);
-    }
-    // Finally, have a damn header
 
     printf("\n%d file listings found, starting at offset %x\n",
-           header->num_listings, header->offset_listings);
+           header.num_listings, header.offset_listings);
 
     struct listing *templist = malloc(sizeof(struct listing));
     if(templist == NULL)
@@ -86,7 +74,7 @@ int main(int argc, char **argv)
     }
 
     int i, offset;
-    for(i = 0, offset = header->offset_listings; i < header->num_listings;
+    for(i = 0, offset = header.offset_listings; i < header.num_listings;
         i++, offset += sizeof(struct listing))
     {
         if(pread(fd, templist, sizeof(struct listing), offset) !=
@@ -107,6 +95,28 @@ int main(int argc, char **argv)
     }
 
     return(0);
+}
+
+int open_icdb(char *filename, struct dbhead *header)
+{
+    // return the fd ( >=0) and set *header pointing at the header if
+    // successful, returns <0 to signal error.
+
+    int fd = open(filename, O_RDONLY);
+    if(fd == -1)
+    {
+        fprintf(stderr, "\nError trying to open file\n\n");
+        return(-1);
+    }
+    if(read(fd, header, sizeof(struct dbhead)) != sizeof(struct dbhead))
+    {
+        fprintf(stderr, "\nFile too small to get a whole header\n\n");
+        free(header);
+        close(fd);
+        return(-1);
+    }
+    // Finally, have a damn header
+    return(fd);
 }
 
 uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
