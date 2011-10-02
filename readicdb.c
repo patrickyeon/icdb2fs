@@ -44,6 +44,7 @@ uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
                        int index);
 void unscramble_guid(uint8_t *guid);
 int open_icdb(char *filename, struct dbhead *header);
+int get_listing(int fd, struct dbhead *header, int id, struct listing *ret);
 
 int main(int argc, char **argv)
 {
@@ -66,31 +67,21 @@ int main(int argc, char **argv)
     printf("\n%d file listings found, starting at offset %x\n",
            header.num_listings, header.offset_listings);
 
-    struct listing *templist = malloc(sizeof(struct listing));
-    if(templist == NULL)
+    struct listing templist;
+    int i;
+    for(i = 0; i < header.num_listings; i++)
     {
-        fprintf(stderr, "Memory error\n\n");
-        return(-1);
-    }
-
-    int i, offset;
-    for(i = 0, offset = header.offset_listings; i < header.num_listings;
-        i++, offset += sizeof(struct listing))
-    {
-        if(pread(fd, templist, sizeof(struct listing), offset) !=
-           sizeof(struct listing))
+        int err;
+        if(err = get_listing(fd, &header, i, &templist) != 0)
         {
-            fprintf(stderr, "Ran out of file before finishing listings\n\n");
+            fprintf(stderr, "\nAssumption failure on listing number %d: %x\n",
+                    i, err);
             return(-1);
         }
-
-        // deal with the guid
-        unscramble_guid(templist->guid);
-
-        printf("%5x %5x [%5x] ", templist->data_offset,
-               templist->data_offset + templist->data_size + 15, // 15=header-1
-               templist->data_size);
-        fwrite(&(templist->filename), templist->char_count, 1, stdout);
+        printf("%5x %5x [%5x] ", templist.data_offset,
+               templist.data_offset + templist.data_size + 15, // 15 = header-1
+               templist.data_size);
+        fwrite(&(templist.filename), templist.char_count, 1, stdout);
         printf("\n");
     }
 
@@ -126,12 +117,12 @@ uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
     // is the assumption about the first value correct?
     if(index != 0 && listing->list_len != 1)
     {
-        warn |= 1;
+        warn |= 1 << 1;
     }
     // are the head-only bytes really head-only?
     if(index != 0 && (listing->head_only[0] || listing->head_only[1]))
     {
-        warn |= (1 << 1);
+        warn |= (1 << 2);
     }
     // what about the non-head entry?
     if(index == 0 && listing->back_step)
@@ -183,3 +174,25 @@ void unscramble_guid(uint8_t *guid)
     }
     return;
 }
+
+int get_listing(int fd, struct dbhead *header, int id, struct listing *ret)
+{
+    // returns 0 on success
+
+    // pretty confident this will need to change once I get >100 files
+    int offset = header->offset_listings + id * sizeof(struct listing);
+
+    if(pread(fd, ret, sizeof(struct listing), offset) !=
+        sizeof(struct listing))
+    {
+        fprintf(stderr, "Ran out of file before finishing listings\n\n");
+        return(-1);
+    }
+
+    // deal with the guid
+    unscramble_guid(ret->guid);
+    
+    int err = check_listing(ret, header, id);
+    return(err);
+}
+
