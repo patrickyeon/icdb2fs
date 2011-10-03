@@ -72,7 +72,7 @@ int main(int argc, char **argv)
     for(i = 0; i < header.num_listings; i++)
     {
         int err;
-        if(err = get_listing(fd, &header, i, &templist) != 0)
+        if((err = get_listing(fd, &header, i, &templist)) != 0)
         {
             fprintf(stderr, "\nAssumption failure on listing number %d: %x\n",
                     i, err);
