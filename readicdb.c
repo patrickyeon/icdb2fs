@@ -27,7 +27,8 @@ struct listing
     uint32_t head_only[2]; // unknown, but 0x0 when not the head?
     uint32_t back_step; // backwards offset to start of prev. listing, from 
                         // start of this listing. Includes the NULL-padding, is
-                        // 0x00 for the first listing
+                        // offset of next batch of listings for the first
+                        // listing in a batch, or 0x0 if there is no next batch
     uint32_t self_ref; // seems to be an offset that points back to here
     uint32_t gap; // maybe always zero?
     uint32_t char_count;
@@ -40,11 +41,12 @@ struct listing
 };
 #pragma pack()
 
-uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
+int check_listing(struct listing *listing, struct dbhead *dbheader,
                        int index);
 void unscramble_guid(uint8_t *guid);
 int open_icdb(char *filename, struct dbhead *header);
 int get_listing(int fd, struct dbhead *header, int id, struct listing *ret);
+int get_listing_offset(int fd, int offset, struct listing *ret);
 
 int main(int argc, char **argv)
 {
@@ -74,9 +76,10 @@ int main(int argc, char **argv)
         int err;
         if((err = get_listing(fd, &header, i, &templist)) != 0)
         {
-            fprintf(stderr, "\nAssumption failure on listing number %d: %x\n",
+            fprintf(stderr, "Assumption failure on listing number %d: x%x\n",
                     i, err);
-            return(-1);
+            // don't fail out for now, two assumptions break when numfiles >100
+            //return(-1);
         }
         printf("%5x %5x [%5x] %s\n", templist.data_offset,
                templist.data_offset + templist.data_size + 15, // 15 = header-1
@@ -107,7 +110,7 @@ int open_icdb(char *filename, struct dbhead *header)
     return(fd);
 }
 
-uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
+int check_listing(struct listing *listing, struct dbhead *dbheader,
                        int index)
 {
     // Check various assumptions about what the entries mean
@@ -122,18 +125,14 @@ uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
     {
         warn |= (1 << 2);
     }
-    // what about the non-head entry?
-    if(index == 0 && listing->back_step)
-    {
-        warn |= (1 << 3);
-    }
     // does the self-ref just point to itself?
+    /* offset calculation is wrong when they get broken into chunks
     if(listing->self_ref != dbheader->offset_listings + LISTING_LEN * index
                             + (void *)(&(listing->self_ref))
                             - (void *)listing)
     {
         warn |= (1 << 4);
-    }
+    }*/
     // empty int?
     if(listing->gap != 0)
     {
@@ -186,21 +185,44 @@ void unscramble_guid(uint8_t *guid)
 int get_listing(int fd, struct dbhead *header, int id, struct listing *ret)
 {
     // returns 0 on success
+    assert(header != NULL);
+    assert(fd >= 0);
+    assert(id < header->num_listings);
 
     // pretty confident this will need to change once I get >100 files
-    int offset = header->offset_listings + id * sizeof(struct listing);
-
-    if(pread(fd, ret, sizeof(struct listing), offset) !=
-        sizeof(struct listing))
+    int offset = header->offset_listings;
+    if(id > 0)
     {
-        fprintf(stderr, "Ran out of file before finishing listings\n\n");
+        struct listing start;
+        get_listing(fd, header, 0, &start);
+        int tempid = id;
+        while(tempid >= start.list_len)
+        {
+            tempid -= start.list_len;
+            offset = start.back_step;
+            get_listing_offset(fd, offset, &start);
+        }
+        offset += tempid * sizeof(struct listing);
+    }
+
+    if(get_listing_offset(fd, offset, ret) != sizeof(struct listing))
+    {
+        fprintf(stderr, "File cuts off during a listing\n\n");
         return(-1);
     }
 
     // deal with the guid
+    // FIXME stop doing this here
     unscramble_guid(ret->guid);
     
     int err = check_listing(ret, header, id);
     return(err);
 }
 
+int get_listing_offset(int fd, int offset, struct listing *ret)
+{
+    // get the listing directly from an offset, does no checking on the listing
+    // I know it's not much now, but if I choose to make it smarter later, it's
+    // all in one spot.
+    return(pread(fd, ret, sizeof(struct listing), offset));
+}
