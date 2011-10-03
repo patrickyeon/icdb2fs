@@ -78,11 +78,9 @@ int main(int argc, char **argv)
                     i, err);
             return(-1);
         }
-        printf("%5x %5x [%5x] ", templist.data_offset,
+        printf("%5x %5x [%5x] %s\n", templist.data_offset,
                templist.data_offset + templist.data_size + 15, // 15 = header-1
-               templist.data_size);
-        fwrite(&(templist.filename), templist.char_count, 1, stdout);
-        printf("\n");
+               templist.data_size, templist.filename);
     }
 
     return(0);
@@ -145,6 +143,16 @@ uint32_t check_listing(struct listing *listing, struct dbhead *dbheader,
     if(listing->last_flag != 1)
     {
         warn |= (1 << 6);
+    }
+    // filename is zero-padded, and nothing follows it?
+    char *c;
+    for(c = listing->filename + listing->char_count;
+        c < listing->filename + LISTING_NAME_LEN; c++)
+    {
+        if(*c != 0){
+            warn |= (1 << 7);
+            break;
+        }
     }
     return(warn);
 }
