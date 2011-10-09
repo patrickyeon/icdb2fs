@@ -10,6 +10,7 @@
 #define LISTING_NAME_LEN 192
 #define ICDB_SEP '\\'
 #define HOST_SEP '/'
+#define DEF_OUT_DIR '.'
 
 #pragma pack(1) // just going to hope this is doing what I think.
 struct dbhead
@@ -54,7 +55,7 @@ void human_size(int bytes, char *buff);
 int main(int argc, char **argv)
 {
     assert(sizeof(struct listing) == LISTING_LEN);
-    if(argc < 1)
+    if(argc < 2)
     {
         fprintf(stderr, "\nUsage: %s <db file>\n -- Nothing fancy yet\n\n",
                 argv[0]);
@@ -95,14 +96,14 @@ void human_size(int bytes, char *buff)
 {
     //buff better have 6 chars for me.
     char unit = '\0';
-    if(bytes >= 1024 * 1024 * 5)
+    if(bytes >= 1024 * 1024 * 2)
     {
         // so long as using 32bit ints, max file size is 4GB. I think it's fair
         // to not worry about eg. 1.2G and instead put eg. 1230M
         bytes = bytes / (1024 * 1024);
         unit = 'M';
     }
-    else if(bytes >= 1024 * 5)
+    else if(bytes >= 1024 * 2)
     {
         bytes = bytes / 1024;
         unit = 'K';
@@ -174,6 +175,11 @@ int check_listing(struct listing *listing, struct dbhead *dbheader, int index)
             warn |= (1 << 7);
             break;
         }
+    }
+    // filename starts with directory seperator?
+    if(listing->filename[0] != ICDB_SEP)
+    {
+        warn |= (1 << 8);
     }
     return(warn);
 }
