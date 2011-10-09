@@ -8,6 +8,8 @@
 #define HEADER_SKIP_BYTES 72
 #define LISTING_LEN 256
 #define LISTING_NAME_LEN 192
+#define ICDB_SEP '\\'
+#define HOST_SEP '/'
 
 #pragma pack(1) // just going to hope this is doing what I think.
 struct dbhead
@@ -47,6 +49,7 @@ void unscramble_guid(uint8_t *guid);
 int open_icdb(char *filename, struct dbhead *header);
 int get_listing(int fd, struct dbhead *header, int id, struct listing *ret);
 int get_listing_offset(int fd, int offset, struct listing *ret);
+void human_size(int bytes, char *buff);
 
 int main(int argc, char **argv)
 {
@@ -66,8 +69,7 @@ int main(int argc, char **argv)
         return(-1);
     }
 
-    printf("\n%d file listings found, starting at offset %x\n",
-           header.num_listings, header.offset_listings);
+    printf("\n%d files\n", header.num_listings);
 
     struct listing templist;
     int i;
@@ -81,13 +83,34 @@ int main(int argc, char **argv)
             // don't fail out for now, two assumptions break when numfiles >100
             //return(-1);
         }
-        printf("%5x %5x [%5x] %s\n", templist.data_offset,
-               templist.data_offset + templist.data_size + 15, // 15 = header-1
-               templist.data_size, templist.filename);
+        char hsize[6];
+        human_size((int) (templist.data_size), hsize);
+        printf("% 5s %s\n", hsize, templist.filename);
     }
 
     return(0);
 }
+
+void human_size(int bytes, char *buff)
+{
+    //buff better have 6 chars for me.
+    char unit = '\0';
+    if(bytes >= 1024 * 1024 * 5)
+    {
+        // so long as using 32bit ints, max file size is 4GB. I think it's fair
+        // to not worry about eg. 1.2G and instead put eg. 1230M
+        bytes = bytes / (1024 * 1024);
+        unit = 'M';
+    }
+    else if(bytes >= 1024 * 5)
+    {
+        bytes = bytes / 1024;
+        unit = 'K';
+    }
+    snprintf(buff, 6, "%d%c", bytes, unit);
+    return;
+}
+
 
 int open_icdb(char *filename, struct dbhead *header)
 {
@@ -110,8 +133,7 @@ int open_icdb(char *filename, struct dbhead *header)
     return(fd);
 }
 
-int check_listing(struct listing *listing, struct dbhead *dbheader,
-                       int index)
+int check_listing(struct listing *listing, struct dbhead *dbheader, int index)
 {
     // Check various assumptions about what the entries mean
     uint32_t warn = 0;
