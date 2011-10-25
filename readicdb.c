@@ -81,7 +81,7 @@ int main(int argc, char **argv)
             // don't fail out for now, two assumptions break when numfiles >100
             //return(-1);
         }
-        printf("%5x %5x [%5x] %s\n", templist.data_offset,
+        printf("%6x %6x [%5x] %s\n", templist.data_offset,
                templist.data_offset + templist.data_size + 15, // 15 = header-1
                templist.data_size, templist.filename);
     }
