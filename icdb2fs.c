@@ -1,7 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <fcntl.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <string.h>
@@ -49,13 +48,13 @@ struct listing
 int check_listing(struct listing *listing, struct dbhead *dbheader,
                        int index);
 void unscramble_guid(uint8_t *guid);
-int open_icdb(char *filename, struct dbhead *header);
-int get_listing(int fd, struct dbhead *header, int id, struct listing *ret);
-int get_listing_offset(int fd, int offset, struct listing *ret);
+FILE *open_icdb(char *filename, struct dbhead *header);
+int get_listing(FILE *db, struct dbhead *header, int id, struct listing *ret);
+int get_listing_offset(FILE *db, int offset, struct listing *ret);
 void human_size(int bytes, char *buff);
-void print_contents(int fd, struct dbhead *header);
+void print_contents(FILE *db, struct dbhead *header);
 void usage();
-int extract(int fdfrom, struct dbhead *header, char *outdir);
+int extract(FILE *db, struct dbhead *header, char *outdir);
 
 int main(int argc, char **argv)
 {
@@ -65,17 +64,17 @@ int main(int argc, char **argv)
         usage(argv);
     }
 
-    int fd;
+    FILE *db;
     struct dbhead header;
 
-    if((fd = open_icdb(argv[2], &header)) < 0)
+    if((db = open_icdb(argv[2], &header)) == NULL)
     {
         return(-1);
     }
 
     if(argv[1][0] == 't')
     {
-        print_contents(fd, &header);
+        print_contents(db, &header);
     }
 
     else if(argv[1][0] == 'x')
@@ -90,7 +89,7 @@ int main(int argc, char **argv)
             outdir = malloc(DEF_OUT_DIR_LEN * sizeof(char));
             strncpy(outdir, DEF_OUT_DIR, DEF_OUT_DIR_LEN);
         }
-        extract(fd, &header, outdir);
+        extract(db, &header, outdir);
     }
 
     return(0);
@@ -104,7 +103,7 @@ void usage(char **argv)
     exit(-1);
 }
 
-void print_contents(int fd, struct dbhead *header)
+void print_contents(FILE *db, struct dbhead *header)
 {
     printf("\n%d files\n", header->num_listings);
     struct listing templist;
@@ -112,7 +111,7 @@ void print_contents(int fd, struct dbhead *header)
     for(i = 0; i < header->num_listings; i++)
     {
         int err;
-        if((err = get_listing(fd, header, i, &templist)) != 0)
+        if((err = get_listing(db, header, i, &templist)) != 0)
         {
             fprintf(stderr, "Assumption failure on listing number %d: x%x\n",
                     i, err);
@@ -145,7 +144,7 @@ void human_size(int bytes, char *buff)
     return;
 }
 
-int extract(int fdfrom, struct dbhead *header, char *outdir)
+int extract(FILE *db, struct dbhead *header, char *outdir)
 {
     printf("Copying %d files to %s\n", header->num_listings, outdir);
     struct listing templist;
@@ -160,7 +159,7 @@ int extract(int fdfrom, struct dbhead *header, char *outdir)
     int i;
     for(i = 0; i < header->num_listings; i++)
     {
-        int err = get_listing(fdfrom, header, i, &templist);
+        int err = get_listing(db, header, i, &templist);
         if(err & ((1 << 7) | (1 << 8)) != 0)
         {
             // just skip for now
@@ -177,10 +176,10 @@ int extract(int fdfrom, struct dbhead *header, char *outdir)
         // FIXME change the directory seperators if local system requires it
         // FIXME create the directory if necessary
 
-        int fdto = open(tempfilename, O_WRONLY | O_CREAT | O_EXCL);
+        FILE *outfile = fopen(tempfilename, "w");
         // TODO maybe tweak the flags there when you are a little more sure
         // that you're not about to break things on the fs
-        if(fdto == -1)
+        if(outfile == NULL)
         {
             printf("Error on output file: %s\n", tempfilename);
             continue;
@@ -191,27 +190,28 @@ int extract(int fdfrom, struct dbhead *header, char *outdir)
         
         // close fdto
     }
+    return(0);
 }
 
-int open_icdb(char *filename, struct dbhead *header)
+FILE *open_icdb(char *filename, struct dbhead *header)
 {
-    // return the fd ( >=0) and set *header pointing at the header if
-    // successful, returns <0 to signal error.
+    // return the FILE* (!= NULL) and set *header pointing at the header if
+    // successful, returns NULL to signal error.
 
-    int fd = open(filename, O_RDONLY);
-    if(fd == -1)
+    FILE *icdb = fopen(filename, "r");
+    if(icdb == NULL)
     {
         fprintf(stderr, "\nError trying to open file\n\n");
-        return(-1);
+        return(NULL);
     }
-    if(read(fd, header, sizeof(struct dbhead)) != sizeof(struct dbhead))
+    if(fread(header, 1, sizeof(struct dbhead), icdb) != sizeof(struct dbhead))
     {
         fprintf(stderr, "\nFile too small to get a whole header\n\n");
-        close(fd);
-        return(-1);
+        fclose(icdb);
+        return(NULL);
     }
     // Finally, have a damn header
-    return(fd);
+    return(icdb);
 }
 
 int check_listing(struct listing *listing, struct dbhead *dbheader, int index)
@@ -290,11 +290,11 @@ void unscramble_guid(uint8_t *guid)
     return;
 }
 
-int get_listing(int fd, struct dbhead *header, int id, struct listing *ret)
+int get_listing(FILE *db, struct dbhead *header, int id, struct listing *ret)
 {
     // returns 0 on success
     assert(header != NULL);
-    assert(fd >= 0);
+    assert(db != NULL);
     assert(id < header->num_listings);
 
     // pretty confident this will need to change once I get >100 files
@@ -302,18 +302,18 @@ int get_listing(int fd, struct dbhead *header, int id, struct listing *ret)
     if(id > 0)
     {
         struct listing start;
-        get_listing(fd, header, 0, &start);
+        get_listing(db, header, 0, &start);
         int tempid = id;
         while(tempid >= start.list_len)
         {
             tempid -= start.list_len;
             offset = start.back_step;
-            get_listing_offset(fd, offset, &start);
+            get_listing_offset(db, offset, &start);
         }
         offset += tempid * sizeof(struct listing);
     }
 
-    if(get_listing_offset(fd, offset, ret) != sizeof(struct listing))
+    if(get_listing_offset(db, offset, ret) != sizeof(struct listing))
     {
         fprintf(stderr, "File cuts off during a listing\n\n");
         return(-1);
@@ -327,10 +327,12 @@ int get_listing(int fd, struct dbhead *header, int id, struct listing *ret)
     return(err);
 }
 
-int get_listing_offset(int fd, int offset, struct listing *ret)
+int get_listing_offset(FILE *db, int offset, struct listing *ret)
 {
     // get the listing directly from an offset, does no checking on the listing
     // I know it's not much now, but if I choose to make it smarter later, it's
     // all in one spot.
-    return(pread(fd, ret, sizeof(struct listing), offset));
+    // FIXME error handling
+    fseek(db, offset, SEEK_SET);
+    return(fread(ret, 1, sizeof(struct listing), db));
 }
