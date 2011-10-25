@@ -55,6 +55,7 @@ int get_listing_offset(int fd, int offset, struct listing *ret);
 void human_size(int bytes, char *buff);
 void print_contents(int fd, struct dbhead *header);
 void usage();
+int extract(int fdfrom, struct dbhead *header, char *outdir);
 
 int main(int argc, char **argv)
 {
@@ -89,7 +90,7 @@ int main(int argc, char **argv)
             outdir = malloc(DEF_OUT_DIR_LEN * sizeof(char));
             strncpy(outdir, DEF_OUT_DIR, DEF_OUT_DIR_LEN);
         }
-        // TODO extract(fd, &header, outdir);
+        extract(fd, &header, outdir);
     }
 
     return(0);
@@ -144,6 +145,53 @@ void human_size(int bytes, char *buff)
     return;
 }
 
+int extract(int fdfrom, struct dbhead *header, char *outdir)
+{
+    printf("Copying %d files to %s\n", header->num_listings, outdir);
+    struct listing templist;
+    int prefixlen = strlen(outdir);
+    char *tempfilename = malloc((prefixlen + LISTING_NAME_LEN) * sizeof(char));
+    if(tempfilename == NULL)
+    {
+        return(-1); // but seriously, how likely?
+    }
+    strcpy(tempfilename, outdir);
+
+    int i;
+    for(i = 0; i < header->num_listings; i++)
+    {
+        int err = get_listing(fdfrom, header, i, &templist);
+        if(err & ((1 << 7) | (1 << 8)) != 0)
+        {
+            // just skip for now
+            // TODO handle errors more intelligently, thoroughly
+            continue;
+        }
+        strcpy(tempfilename + prefixlen, templist.filename);
+        // that clobbers the prefix's terminating \0 on purpose
+        
+        // TODO clear this out and let the loop run
+        printf("%s\n", tempfilename);
+        continue;
+
+        // FIXME change the directory seperators if local system requires it
+        // FIXME create the directory if necessary
+
+        int fdto = open(tempfilename, O_WRONLY | O_CREAT | O_EXCL);
+        // TODO maybe tweak the flags there when you are a little more sure
+        // that you're not about to break things on the fs
+        if(fdto == -1)
+        {
+            printf("Error on output file: %s\n", tempfilename);
+            continue;
+        }
+        // write to fdto from fdfrom, start at offset = templist->data_offset
+        // total length = templist->data_size (check that there's no prologue
+        // on the data in fdfrom)
+        
+        // close fdto
+    }
+}
 
 int open_icdb(char *filename, struct dbhead *header)
 {
