@@ -4,13 +4,15 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <string.h>
 
 #define HEADER_SKIP_BYTES 72
 #define LISTING_LEN 256
 #define LISTING_NAME_LEN 192
 #define ICDB_SEP '\\'
 #define HOST_SEP '/'
-#define DEF_OUT_DIR '.'
+#define DEF_OUT_DIR "."
+#define DEF_OUT_DIR_LEN 2
 
 #pragma pack(1) // just going to hope this is doing what I think.
 struct dbhead
@@ -51,33 +53,65 @@ int open_icdb(char *filename, struct dbhead *header);
 int get_listing(int fd, struct dbhead *header, int id, struct listing *ret);
 int get_listing_offset(int fd, int offset, struct listing *ret);
 void human_size(int bytes, char *buff);
+void print_contents(int fd, struct dbhead *header);
+void usage();
 
 int main(int argc, char **argv)
 {
     assert(sizeof(struct listing) == LISTING_LEN);
-    if(argc < 2)
+    if(argc < 2 || argv[1][1] != '\0')
     {
-        fprintf(stderr, "\nUsage: %s <db file>\n -- Nothing fancy yet\n\n",
-                argv[0]);
-        return(-1);
+        usage(argv);
     }
 
     int fd;
     struct dbhead header;
 
-    if((fd = open_icdb(argv[1], &header)) < 0)
+    if((fd = open_icdb(argv[2], &header)) < 0)
     {
         return(-1);
     }
 
-    printf("\n%d files\n", header.num_listings);
+    if(argv[1][0] == 't')
+    {
+        print_contents(fd, &header);
+    }
 
+    else if(argv[1][0] == 'x')
+    {
+        char *outdir;
+        if(argc > 3)
+        {
+            outdir = argv[3];
+        }
+        else
+        {
+            outdir = malloc(DEF_OUT_DIR_LEN * sizeof(char));
+            strncpy(outdir, DEF_OUT_DIR, DEF_OUT_DIR_LEN);
+        }
+        // TODO extract(fd, &header, outdir);
+    }
+
+    return(0);
+}
+
+void usage(char **argv)
+{
+    fprintf(stderr, "\nUsage: %s t | x dbfile [path]\n", argv[0]);
+    fprintf(stderr, "t -- list files in dbfile\n");
+    fprintf(stderr, "x -- extract files to path (default ./)\n");
+    exit(-1);
+}
+
+void print_contents(int fd, struct dbhead *header)
+{
+    printf("\n%d files\n", header->num_listings);
     struct listing templist;
     int i;
-    for(i = 0; i < header.num_listings; i++)
+    for(i = 0; i < header->num_listings; i++)
     {
         int err;
-        if((err = get_listing(fd, &header, i, &templist)) != 0)
+        if((err = get_listing(fd, header, i, &templist)) != 0)
         {
             fprintf(stderr, "Assumption failure on listing number %d: x%x\n",
                     i, err);
@@ -88,8 +122,6 @@ int main(int argc, char **argv)
         human_size((int) (templist.data_size), hsize);
         printf("% 5s %s\n", hsize, templist.filename);
     }
-
-    return(0);
 }
 
 void human_size(int bytes, char *buff)
