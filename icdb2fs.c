@@ -92,6 +92,7 @@ int main(int argc, char **argv)
             strncpy(outdir, DEF_OUT_DIR, DEF_OUT_DIR_LEN);
         }
         extract(db, &header, outdir);
+        free(outdir);
     }
 
     return(0);
@@ -230,6 +231,7 @@ int extract(FILE *db, struct dbhead *header, char *outdir)
         // close fdto
         fclose(outfile);
     }
+    free(tempfilename);
     return(0);
 }
 
