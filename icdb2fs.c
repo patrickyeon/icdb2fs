@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 #define HEADER_SKIP_BYTES 72
 #define LISTING_LEN 256
@@ -169,26 +171,64 @@ int extract(FILE *db, struct dbhead *header, char *outdir)
         strcpy(tempfilename + prefixlen, templist.filename);
         // that clobbers the prefix's terminating \0 on purpose
         
-        // TODO clear this out and let the loop run
-        printf("%s\n", tempfilename);
-        continue;
+        // change the directory seperators if local system requires it
+        if(ICDB_SEP != HOST_SEP)
+        {
+            char *c;
+            while((c = strchr(tempfilename, ICDB_SEP)) != NULL)
+            {
+                *c = HOST_SEP;
+            }
+        }
 
-        // FIXME change the directory seperators if local system requires it
-        // FIXME create the directory if necessary
+        // create the directory if necessary
+        char *predir = strdup(tempfilename);
+        if(predir == NULL)
+        {
+            printf("Mem error\n");
+            continue;
+        }
+        // TODO will I see trouble if *predir = "\0"?
+        // can that even happen?
+        char *c = predir + 1;
+        while((c = strchr(c, HOST_SEP)) != NULL)
+        {
+            c++;
+            char *path = strndup(predir, c - predir);
+            if(path == NULL)
+            {
+                printf("Mem error\n");
+            }
+            struct stat trash;
+            errno = 0;
+            if(stat(path, &trash) != 0 && (errno | ENOENT))
+            {
+                if(mkdir(path, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0)
+                {
+                    printf("Error creating dir: %s\n", path);
+                    continue;
+                }
+            }
+            free(path);
+        }
+        free(predir);
 
         FILE *outfile = fopen(tempfilename, "w");
         // TODO maybe tweak the flags there when you are a little more sure
         // that you're not about to break things on the fs
+        // Also, maybe check about clobbering already-present files?
         if(outfile == NULL)
         {
             printf("Error on output file: %s\n", tempfilename);
             continue;
         }
+        //TODO all this ---v
         // write to fdto from fdfrom, start at offset = templist->data_offset
         // total length = templist->data_size (check that there's no prologue
         // on the data in fdfrom)
         
         // close fdto
+        fclose(outfile);
     }
     return(0);
 }
