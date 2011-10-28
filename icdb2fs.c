@@ -120,7 +120,7 @@ void print_contents(FILE *db, struct dbhead *header)
         }
         char hsize[6];
         human_size((int) (templist.data_size), hsize);
-        printf("% 5s %s\n", hsize, templist.filename);
+        printf("%5s %s\n", hsize, templist.filename);
     }
 }
 
@@ -160,7 +160,7 @@ int extract(FILE *db, struct dbhead *header, char *outdir)
     for(i = 0; i < header->num_listings; i++)
     {
         int err = get_listing(db, header, i, &templist);
-        if(err & ((1 << 7) | (1 << 8)) != 0)
+        if((err & ((1 << 7) | (1 << 8))) != 0)
         {
             // just skip for now
             // TODO handle errors more intelligently, thoroughly
