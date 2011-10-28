@@ -223,12 +223,31 @@ int extract(FILE *db, struct dbhead *header, char *outdir)
             printf("Error on output file: %s\n", tempfilename);
             continue;
         }
-        //TODO all this ---v
-        // write to fdto from fdfrom, start at offset = templist->data_offset
-        // total length = templist->data_size (check that there's no prologue
-        // on the data in fdfrom)
-        
-        // close fdto
+        void *buff = malloc(1024); //arbitrary buffer size
+        //TODO not sure that a void * is the proper thing there
+
+        if(fseek(db, templist.data_offset + 0x10, SEEK_SET) != 0)
+        {
+            printf("Seek error: %s\n", tempfilename);
+            continue;
+        }
+        int bytesleft;
+        for(bytesleft = templist.data_size; bytesleft > 1024; bytesleft -= 1024)
+        {
+            if(fread(buff, 1, 1024, db) != 1024 ||
+               fwrite(buff, 1, 1024, outfile) != 1024)
+            {
+                bytesleft = 0;
+                printf("Copy error on %s\n", tempfilename);
+                break;
+            }
+        }
+        if(fread(buff, 1, bytesleft, db) != bytesleft ||
+           fwrite(buff, 1, bytesleft, outfile) != bytesleft)
+        {
+            printf("Copy error on %s\n", tempfilename);
+        }
+
         fclose(outfile);
     }
     free(tempfilename);
