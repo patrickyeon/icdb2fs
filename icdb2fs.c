@@ -84,7 +84,7 @@ int main(int argc, char **argv)
         char *outdir;
         if(argc > 3)
         {
-            outdir = argv[3];
+            outdir = strdup(argv[3]);
         }
         else
         {
