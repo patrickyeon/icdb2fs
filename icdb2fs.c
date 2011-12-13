@@ -15,27 +15,31 @@
 #define DEF_OUT_DIR "."
 #define DEF_OUT_DIR_LEN 2
 
-#pragma pack(1) // just going to hope this is doing what I think.
-struct dbhead
+#pragma pack(1)
+typedef struct dbhead
 {
     uint32_t version[2]; // of what? I don't know, but it looks pretty static
     uint8_t unhandled[HEADER_SKIP_BYTES];
-    uint32_t num_listings;
-    uint32_t offset_listings;
+    uint32_t num_listings; // total number of files in this db
+    uint32_t offset_listings; // offset into db of first file listing
     uint32_t trailing_byte;
-};
+} dbhead;
 
-struct listing
+typedef struct listing
 {
     uint32_t list_len; // may only be a uint_8. Looks like it's the number of
                        // entries in this section if it's the first listing, 
                        // 0x01 otherwise?
-    uint32_t head_only[2]; // unknown, but 0x0 when not the head?
+    uint32_t head_only[2]; // 0x0 when not the table head? When it is the table
+                           // head, head_only[0] may be bytelength of the table,
+                           // head_only[1] I've only seen 0x6410
+    // TODO I no longer understand what I meant by the following comment
     uint32_t back_step; // backwards offset to start of prev. listing, from 
                         // start of this listing. Includes the NULL-padding, is
                         // offset of next batch of listings for the first
                         // listing in a batch, or 0x0 if there is no next batch
-    uint32_t self_ref; // seems to be an offset that points back to here
+    uint32_t self_ref; // seems to be an offset that points back to here, from
+                       // the beginning of the db file
     uint32_t gap; // maybe always zero?
     uint32_t char_count;
     char filename[LISTING_NAME_LEN]; // NULL-padded, guessing at max size
@@ -43,31 +47,31 @@ struct listing
                       // GUID form that I found in \sids.
     uint32_t data_size; // just a guess right now
     uint32_t data_offset; // offset into icdb.dat this file starts at
+                          // File has a header there too, sizeof(uint8_t) * 16
     uint32_t last_flag; // looks like it's always 1?
-};
+} listing;
 #pragma pack()
 
-int check_listing(struct listing *listing, struct dbhead *dbheader,
-                       int index);
+int check_listing(listing *entry, dbhead *dbheader, int index);
 void unscramble_guid(uint8_t *guid);
-FILE *open_icdb(char *filename, struct dbhead *header);
-int get_listing(FILE *db, struct dbhead *header, int id, struct listing *ret);
-int get_listing_offset(FILE *db, int offset, struct listing *ret);
+FILE *open_icdb(char *filename, dbhead *header);
+int get_listing(FILE *db, dbhead *header, int id, listing *ret);
+int get_listing_offset(FILE *db, int offset, listing *ret);
 void human_size(int bytes, char *buff);
-void print_contents(FILE *db, struct dbhead *header);
+void print_contents(FILE *db, dbhead *header);
 void usage();
-int extract(FILE *db, struct dbhead *header, char *outdir);
+int extract(FILE *db, dbhead *header, char *outdir);
 
 int main(int argc, char **argv)
 {
-    assert(sizeof(struct listing) == LISTING_LEN);
+    assert(sizeof(listing) == LISTING_LEN);
     if(argc < 2 || argv[1][1] != '\0')
     {
         usage(argv);
     }
 
     FILE *db;
-    struct dbhead header;
+    dbhead header;
 
     if((db = open_icdb(argv[2], &header)) == NULL)
     {
@@ -106,10 +110,10 @@ void usage(char **argv)
     exit(-1);
 }
 
-void print_contents(FILE *db, struct dbhead *header)
+void print_contents(FILE *db, dbhead *header)
 {
     printf("\n%d files\n", header->num_listings);
-    struct listing templist;
+    listing templist;
     int i;
     for(i = 0; i < header->num_listings; i++)
     {
@@ -147,10 +151,10 @@ void human_size(int bytes, char *buff)
     return;
 }
 
-int extract(FILE *db, struct dbhead *header, char *outdir)
+int extract(FILE *db, dbhead *header, char *outdir)
 {
     printf("Copying %d files to %s\n", header->num_listings, outdir);
-    struct listing templist;
+    listing templist;
     int prefixlen = strlen(outdir);
     char *tempfilename = malloc((prefixlen + LISTING_NAME_LEN) * sizeof(char));
     if(tempfilename == NULL)
@@ -254,7 +258,7 @@ int extract(FILE *db, struct dbhead *header, char *outdir)
     return(0);
 }
 
-FILE *open_icdb(char *filename, struct dbhead *header)
+FILE *open_icdb(char *filename, dbhead *header)
 {
     // return the FILE* (!= NULL) and set *header pointing at the header if
     // successful, returns NULL to signal error.
@@ -265,7 +269,7 @@ FILE *open_icdb(char *filename, struct dbhead *header)
         fprintf(stderr, "\nError trying to open file\n\n");
         return(NULL);
     }
-    if(fread(header, 1, sizeof(struct dbhead), icdb) != sizeof(struct dbhead))
+    if(fread(header, 1, sizeof(dbhead), icdb) != sizeof(dbhead))
     {
         fprintf(stderr, "\nFile too small to get a whole header\n\n");
         fclose(icdb);
@@ -275,42 +279,42 @@ FILE *open_icdb(char *filename, struct dbhead *header)
     return(icdb);
 }
 
-int check_listing(struct listing *listing, struct dbhead *dbheader, int index)
+int check_listing(listing *entry, dbhead *dbheader, int index)
 {
     // Check various assumptions about what the entries mean
     uint32_t warn = 0;
     // is the assumption about the first value correct?
-    if(index != 0 && listing->list_len != 1)
+    if(index != 0 && entry->list_len != 1)
     {
         warn |= 1 << 1;
     }
     // are the head-only bytes really head-only?
-    if(index != 0 && (listing->head_only[0] || listing->head_only[1]))
+    if(index != 0 && (entry->head_only[0] || entry->head_only[1]))
     {
         warn |= (1 << 2);
     }
     // does the self-ref just point to itself?
     /* offset calculation is wrong when they get broken into chunks
-    if(listing->self_ref != dbheader->offset_listings + LISTING_LEN * index
-                            + (void *)(&(listing->self_ref))
-                            - (void *)listing)
+    if(entry->self_ref != dbheader->offset_listings + LISTING_LEN * index
+                            + (void *)(&(entry->self_ref))
+                            - (void *)entry)
     {
         warn |= (1 << 4);
     }*/
     // empty int?
-    if(listing->gap != 0)
+    if(entry->gap != 0)
     {
         warn |= (1 << 5);
     }
     // last int is always 1?
-    if(listing->last_flag != 1)
+    if(entry->last_flag != 1)
     {
         warn |= (1 << 6);
     }
     // filename is zero-padded, and nothing follows it?
     char *c;
-    for(c = listing->filename + listing->char_count;
-        c < listing->filename + LISTING_NAME_LEN; c++)
+    for(c = entry->filename + entry->char_count;
+        c < entry->filename + LISTING_NAME_LEN; c++)
     {
         if(*c != 0){
             warn |= (1 << 7);
@@ -318,7 +322,7 @@ int check_listing(struct listing *listing, struct dbhead *dbheader, int index)
         }
     }
     // filename starts with directory seperator?
-    if(listing->filename[0] != ICDB_SEP)
+    if(entry->filename[0] != ICDB_SEP)
     {
         warn |= (1 << 8);
     }
@@ -351,7 +355,7 @@ void unscramble_guid(uint8_t *guid)
     return;
 }
 
-int get_listing(FILE *db, struct dbhead *header, int id, struct listing *ret)
+int get_listing(FILE *db, dbhead *header, int id, listing *ret)
 {
     // returns 0 on success
     assert(header != NULL);
@@ -362,7 +366,7 @@ int get_listing(FILE *db, struct dbhead *header, int id, struct listing *ret)
     int offset = header->offset_listings;
     if(id > 0)
     {
-        struct listing start;
+        listing start;
         get_listing(db, header, 0, &start);
         int tempid = id;
         while(tempid >= start.list_len)
@@ -371,10 +375,10 @@ int get_listing(FILE *db, struct dbhead *header, int id, struct listing *ret)
             offset = start.back_step;
             get_listing_offset(db, offset, &start);
         }
-        offset += tempid * sizeof(struct listing);
+        offset += tempid * sizeof(listing);
     }
 
-    if(get_listing_offset(db, offset, ret) != sizeof(struct listing))
+    if(get_listing_offset(db, offset, ret) != sizeof(listing))
     {
         fprintf(stderr, "File cuts off during a listing\n\n");
         return(-1);
@@ -388,12 +392,12 @@ int get_listing(FILE *db, struct dbhead *header, int id, struct listing *ret)
     return(err);
 }
 
-int get_listing_offset(FILE *db, int offset, struct listing *ret)
+int get_listing_offset(FILE *db, int offset, listing *ret)
 {
     // get the listing directly from an offset, does no checking on the listing
     // I know it's not much now, but if I choose to make it smarter later, it's
     // all in one spot.
     // FIXME error handling
     fseek(db, offset, SEEK_SET);
-    return(fread(ret, 1, sizeof(struct listing), db));
+    return(fread(ret, 1, sizeof(listing), db));
 }
