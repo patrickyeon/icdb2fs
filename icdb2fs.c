@@ -15,6 +15,10 @@
 #define DEF_OUT_DIR "."
 #define DEF_OUT_DIR_LEN 2
 
+#define EBADENTRY 1
+#define EFILE     2
+#define EMEM      3
+
 #pragma pack(1)
 typedef struct dbhead
 {
@@ -55,12 +59,12 @@ typedef struct listing
 int check_listing(listing *entry, dbhead *dbheader, int index);
 void unscramble_guid(uint8_t *guid);
 FILE *open_icdb(char *filename, dbhead *header);
-int get_listing(FILE *db, dbhead *header, int id, listing *ret);
 int get_listing_offset(FILE *db, int offset, listing *ret);
 void human_size(int bytes, char *buff);
 void print_contents(FILE *db, dbhead *header);
 void usage();
 int extract(FILE *db, dbhead *header, char *outdir);
+int get_listings(FILE *db, dbhead *header, int start, int end, listing *ret);
 
 int main(int argc, char **argv)
 {
@@ -95,7 +99,11 @@ int main(int argc, char **argv)
             outdir = malloc(DEF_OUT_DIR_LEN * sizeof(char));
             strncpy(outdir, DEF_OUT_DIR, DEF_OUT_DIR_LEN);
         }
-        extract(db, &header, outdir);
+
+        if(extract(db, &header, outdir) != 0)
+        {
+            printf("Extract error\n");
+        }
         free(outdir);
     }
 
@@ -113,22 +121,20 @@ void usage(char **argv)
 void print_contents(FILE *db, dbhead *header)
 {
     printf("\n%d files\n", header->num_listings);
-    listing templist;
+    listing *entries = malloc(sizeof(listing) * header->num_listings);
+    if(get_listings(db, header, 0, header->num_listings, entries) != 0)
+    {
+        printf("Haha nope.\n");
+        return;
+    }
     int i;
     for(i = 0; i < header->num_listings; i++)
     {
-        int err;
-        if((err = get_listing(db, header, i, &templist)) != 0)
-        {
-            fprintf(stderr, "Assumption failure on listing number %d: x%x\n",
-                    i, err);
-            // don't fail out for now, two assumptions break when numfiles >100
-            //return(-1);
-        }
         char hsize[6];
-        human_size((int) (templist.data_size), hsize);
-        printf("%5s %s\n", hsize, templist.filename);
+        human_size((int) (entries[i].data_size), hsize);
+        printf("%5s %s\n", hsize, entries[i].filename);
     }
+    free(entries);
 }
 
 void human_size(int bytes, char *buff)
@@ -154,7 +160,6 @@ void human_size(int bytes, char *buff)
 int extract(FILE *db, dbhead *header, char *outdir)
 {
     printf("Copying %d files to %s\n", header->num_listings, outdir);
-    listing templist;
     int prefixlen = strlen(outdir);
     char *tempfilename = malloc((prefixlen + LISTING_NAME_LEN) * sizeof(char));
     if(tempfilename == NULL)
@@ -163,17 +168,16 @@ int extract(FILE *db, dbhead *header, char *outdir)
     }
     strcpy(tempfilename, outdir);
 
+    listing *entries = malloc(header->num_listings * sizeof(listing));
+    int err;
+    if((err = get_listings(db, header, 0, header->num_listings, entries)) != 0)
+    {
+        return(err);
+    }
     int i;
     for(i = 0; i < header->num_listings; i++)
     {
-        int err = get_listing(db, header, i, &templist);
-        if((err & ((1 << 7) | (1 << 8))) != 0)
-        {
-            // just skip for now
-            // TODO handle errors more intelligently, thoroughly
-            continue;
-        }
-        strcpy(tempfilename + prefixlen, templist.filename);
+        strcpy(tempfilename + prefixlen, entries[i].filename);
         // that clobbers the prefix's terminating \0 on purpose
         
         // change the directory seperators if local system requires it
@@ -230,13 +234,13 @@ int extract(FILE *db, dbhead *header, char *outdir)
         void *buff = malloc(1024); //arbitrary buffer size
         //TODO not sure that a void * is the proper thing there
 
-        if(fseek(db, templist.data_offset + 0x10, SEEK_SET) != 0)
+        if(fseek(db, entries[i].data_offset + 0x10, SEEK_SET) != 0)
         {
             printf("Seek error: %s\n", tempfilename);
             continue;
         }
         int bytesleft;
-        for(bytesleft = templist.data_size; bytesleft > 1024; bytesleft -= 1024)
+        for(bytesleft = entries[i].data_size; bytesleft > 1024; bytesleft -= 1024)
         {
             if(fread(buff, 1, 1024, db) != 1024 ||
                fwrite(buff, 1, 1024, outfile) != 1024)
@@ -355,41 +359,63 @@ void unscramble_guid(uint8_t *guid)
     return;
 }
 
-int get_listing(FILE *db, dbhead *header, int id, listing *ret)
+int get_listings(FILE *db, dbhead *header, int start, int end, listing *ret)
 {
-    // returns 0 on success
-    assert(header != NULL);
+    // ret := array of listings, start <= id < end.
+    // it should already be malloc'd to at least sizeof(listing) * (end-start)
     assert(db != NULL);
-    assert(id < header->num_listings);
+    assert(header != NULL);
+    assert(ret != NULL);
+    assert(start >= 0 && start < end && end <= header->num_listings);
 
-    // pretty confident this will need to change once I get >100 files
-    int offset = header->offset_listings;
-    if(id > 0)
+    listing *writeto = ret;
+    int headid = 0;
+    listing head;
+    head.list_len = 0;
+    head.back_step = header->offset_listings;
+    do
     {
-        listing start;
-        get_listing(db, header, 0, &start);
-        int tempid = id;
-        while(tempid >= start.list_len)
+        headid += head.list_len;
+        if(get_listing_offset(db, head.back_step, &head) < sizeof(listing))
         {
-            tempid -= start.list_len;
-            offset = start.back_step;
-            get_listing_offset(db, offset, &start);
+            return(-EFILE);
         }
-        offset += tempid * sizeof(listing);
     }
+    while(start > headid + head.list_len);
+    // start is now in the batch of listings starting at head
 
-    if(get_listing_offset(db, offset, ret) != sizeof(listing))
+    int curid = start;
+    while(end - curid > 0)
     {
-        fprintf(stderr, "File cuts off during a listing\n\n");
-        return(-1);
+        int stop = (end <= curid + head.list_len) ? end : curid + head.list_len;
+        if(fseek(db, (curid - headid - 1) * sizeof(listing), SEEK_CUR) != 0 ||
+           fread(writeto, sizeof(listing), stop - headid, db) < (stop - headid))
+        {
+            return(-EFILE);
+        }
+        writeto += (stop - headid);
+        curid = stop;
+        headid += head.list_len;
+        // TODO don't like special-casing this.
+        if(head.back_step == 0)
+        {
+            // if we're at the last batch, but not done, something's broken
+            if(end - curid > 0)
+            {
+                return(-EBADENTRY);
+            }
+            else
+            {
+                // work is done
+                break;
+            }
+        }
+        if(get_listing_offset(db, head.back_step, &head) < sizeof(listing))
+        {
+            return(-EFILE);
+        }
     }
-
-    // deal with the guid
-    // FIXME stop doing this here
-    unscramble_guid(ret->guid);
-    
-    int err = check_listing(ret, header, id);
-    return(err);
+    return(0);
 }
 
 int get_listing_offset(FILE *db, int offset, listing *ret)
