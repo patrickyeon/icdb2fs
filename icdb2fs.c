@@ -15,6 +15,10 @@
 #define DEF_OUT_DIR "."
 #define DEF_OUT_DIR_LEN 2
 
+#define EBADENTRY 1
+#define EFILE     2
+#define EMEM      3
+
 #pragma pack(1)
 typedef struct dbhead
 {
@@ -353,6 +357,65 @@ void unscramble_guid(uint8_t *guid)
         guid[i] = (uint8_t)(scratch[i] << 4) | (scratch[i] >> 4);
     }
     return;
+}
+
+int get_listings(FILE *db, dbhead *header, int start, int end, listing *ret)
+{
+    // ret := array of listings, start <= id < end.
+    // it should already be malloc'd to at least sizeof(listing) * (end-start)
+    assert(db != NULL);
+    assert(header != NULL);
+    assert(ret != NULL);
+    assert(start >= 0 && start < end && end <= header->num_listings);
+
+    listing *writeto = ret;
+    int headid = 0;
+    listing head;
+    head.list_len = 0;
+    head.back_step = header->offset_listings;
+    do
+    {
+        headid += head.list_len;
+        if(get_listing_offset(db, head.back_step, &head) < sizeof(listing))
+        {
+            return(-EFILE);
+        }
+    }
+    while(start > headid + head.list_len);
+    // start is now in the batch of listings starting at head
+
+    int curid = start;
+    while(end - curid > 0)
+    {
+        int stop = (end <= curid + head.list_len) ? end : curid + head.list_len;
+        if(fseek(db, (curid - headid - 1) * sizeof(listing), SEEK_CUR) != 0 ||
+           fread(writeto, sizeof(listing), stop - headid, db) < (stop - headid))
+        {
+            return(-EFILE);
+        }
+        writeto += (stop - headid);
+        curid = stop;
+        headid += head.list_len;
+        // TODO don't like special-casing this.
+        if(head.back_step == 0)
+        {
+            // if we're at the last batch, but not done, something's broken
+            if(end - curid > 0)
+            {
+                return(-EBADENTRY);
+            }
+            else
+            {
+                // work is done
+                break;
+            }
+        }
+        if(get_listing_offset(db, head.back_step, &head) < sizeof(listing))
+        {
+            return(-EFILE);
+        }
+    }
+    return(0);
 }
 
 int get_listing(FILE *db, dbhead *header, int id, listing *ret)
