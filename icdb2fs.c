@@ -64,7 +64,7 @@ void human_size(int bytes, char *buff);
 void print_contents(FILE *db, dbhead *header);
 void usage();
 int extract(FILE *db, dbhead *header, char *outdir);
-int get_listings(FILE *db, dbhead *header, int start, int end, listing *ret);
+int get_listings(FILE *db, dbhead *header, int start, int end, listing **ret);
 
 int main(int argc, char **argv)
 {
@@ -121,8 +121,8 @@ void usage(char **argv)
 void print_contents(FILE *db, dbhead *header)
 {
     printf("\n%d files\n", header->num_listings);
-    listing *entries = malloc(sizeof(listing) * header->num_listings);
-    if(get_listings(db, header, 0, header->num_listings, entries) != 0)
+    listing *entries = NULL;
+    if(get_listings(db, header, 0, header->num_listings, &entries) != 0)
     {
         printf("Haha nope.\n");
         return;
@@ -168,9 +168,9 @@ int extract(FILE *db, dbhead *header, char *outdir)
     }
     strcpy(tempfilename, outdir);
 
-    listing *entries = malloc(header->num_listings * sizeof(listing));
+    listing *entries = NULL;
     int err;
-    if((err = get_listings(db, header, 0, header->num_listings, entries)) != 0)
+    if((err = get_listings(db, header, 0, header->num_listings, &entries)) != 0)
     {
         return(err);
     }
@@ -359,16 +359,18 @@ void unscramble_guid(uint8_t *guid)
     return;
 }
 
-int get_listings(FILE *db, dbhead *header, int start, int end, listing *ret)
+int get_listings(FILE *db, dbhead *header, int start, int end, listing **ret)
 {
     // ret := array of listings, start <= id < end.
-    // it should already be malloc'd to at least sizeof(listing) * (end-start)
+    // it should not be malloc'd
     assert(db != NULL);
     assert(header != NULL);
     assert(ret != NULL);
     assert(start >= 0 && start < end && end <= header->num_listings);
 
-    listing *writeto = ret;
+    listing *writeto = malloc((end - start) * sizeof(listing));
+    *ret = writeto;
+
     int headid = 0;
     listing head;
     head.list_len = 0;
