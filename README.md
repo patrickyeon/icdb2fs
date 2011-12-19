@@ -24,4 +24,4 @@ Until I have had an opportunity to investigate legal matters going forward, patc
 License
 -------
 
-This software is licensed under the 2-clause BSD license ("FreeBSD License"), Copyright 2011 Patrick Yeon. Of course, I'd love to hear if anyone uses it anywhere.
+This software is licensed under the 2-clause BSD license ("Simplified BSD License"), Copyright 2011 Patrick Yeon. Of course, I'd love to hear if anyone uses it anywhere.
