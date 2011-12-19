@@ -368,9 +368,6 @@ int get_listings(FILE *db, dbhead *header, int start, int end, listing **ret)
     assert(ret != NULL);
     assert(start >= 0 && start < end && end <= header->num_listings);
 
-    listing *writeto = malloc((end - start) * sizeof(listing));
-    *ret = writeto;
-
     int headid = 0;
     listing head;
     head.list_len = 0;
@@ -386,38 +383,62 @@ int get_listings(FILE *db, dbhead *header, int start, int end, listing **ret)
     while(start > headid + head.list_len);
     // start is now in the batch of listings starting at head
 
-    int curid = start;
-    while(end - curid > 0)
+    listing *writeto = malloc((end - start) * sizeof(listing));
+    if(writeto == NULL)
     {
-        int stop = (end <= curid + head.list_len) ? end : curid + head.list_len;
-        if(fseek(db, (curid - headid - 1) * sizeof(listing), SEEK_CUR) != 0 ||
-           fread(writeto, sizeof(listing), stop - headid, db) < (stop - headid))
+        return(-EMEM);
+    }
+    *ret = writeto;
+    
+    // seek to the first entry we'll want
+    // fseek(db, (start - headid - 1) * sizeof(listing), SEEK_CUR);
+
+    int retval = 0;
+    int curid = start;
+    int left, chk = sizeof(listing);
+    for(left = end - start; left > 0;
+            chk = get_listing_offset(db, head.back_step, &head))
+    {
+        if(chk != sizeof(listing))
         {
-            return(-EFILE);
+            retval = -EFILE;
+            break;
         }
-        writeto += (stop - headid);
+        // rewind to start of this batch
+        fseek(db, -1 * sizeof(listing), SEEK_CUR);
+        int stop = curid + head.list_len;
+        if(end <= stop)
+            stop = end;
+        int lsread = fread(writeto, sizeof(listing), stop - headid, db);
+        if(lsread < (stop - headid))
+        {
+            retval = -EFILE;
+            break;
+        }
+        writeto += lsread;
+        left -= lsread;
         curid = stop;
         headid += head.list_len;
-        // TODO don't like special-casing this.
         if(head.back_step == 0)
         {
-            // if we're at the last batch, but not done, something's broken
-            if(end - curid > 0)
-            {
-                return(-EBADENTRY);
-            }
-            else
-            {
-                // work is done
-                break;
-            }
-        }
-        if(get_listing_offset(db, head.back_step, &head) < sizeof(listing))
-        {
-            return(-EFILE);
+            // TODO don't like this here, but need it in case left > 0, but
+            // we've torn through the whole file. If that's the case, retval
+            // will be set by the (left > 0) check outside of the loop
+            break;
         }
     }
-    return(0);
+    if(left > 0)
+    {
+        // ran out of entries in the file before we should have
+        retval = -EFILE;
+    }
+
+    if(retval != 0)
+    {
+        free(*ret);
+        *ret = NULL;
+    }
+    return(retval);
 }
 
 int get_listing_offset(FILE *db, int offset, listing *ret)
